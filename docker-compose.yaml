@@ -41,8 +41,29 @@ services:
       retries: 5
       start_period: 30s
 
+  game-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: gamedb
+      POSTGRES_USER: gameuser
+      POSTGRES_PASSWORD: gamepassword
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - game_pg_data:/var/lib/postgresql/data/pgdata
+    ports:
+      - "5433:5432"
+    networks:
+      - keycloak-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gameuser -d gamedb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 volumes:
   pg_data:
+  game_pg_data:
 
 networks:
   keycloak-net:
