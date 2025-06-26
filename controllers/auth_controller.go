@@ -55,7 +55,7 @@ func (ctrl *AuthController) Login(c *gin.Context) {
 
 // Register handles user registration
 // @Summary User registration
-// @Description Create new user account in Keycloak and local database
+// @Description Create new user account
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -74,7 +74,8 @@ func (ctrl *AuthController) Register(c *gin.Context) {
 		return
 	}
 
-	err := ctrl.authService.Register(c.Request.Context(), &req)
+	// Try registration with auto-login
+	response, err := ctrl.authService.Register(c.Request.Context(), &req)
 	if err != nil {
 		logrus.WithError(err).Error("Registration failed")
 
@@ -87,6 +88,14 @@ func (ctrl *AuthController) Register(c *gin.Context) {
 			return
 		}
 
+		// Check if registration succeeded but auto-login failed
+		if err.Error() == "registration succeeded, please login manually" {
+			c.JSON(http.StatusCreated, dto.SuccessResponse{
+				Message: "User registered successfully. Please login to get access token.",
+			})
+			return
+		}
+
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{
 			Message: "Registration failed",
 			Code:    "REGISTRATION_FAILED",
@@ -94,9 +103,8 @@ func (ctrl *AuthController) Register(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, dto.SuccessResponse{
-		Message: "User registered successfully",
-	})
+	// Registration and auto-login succeeded
+	c.JSON(http.StatusCreated, response)
 }
 
 // GetMe returns current user information

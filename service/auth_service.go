@@ -26,22 +26,27 @@ func NewAuthService(userRepo *repository.UserRepository, roleRepo *repository.Ro
 	}
 }
 
+// Login authenticates user with Keycloak and syncs with local database
 func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.LoginResponse, error) {
+	// Authenticate with Keycloak
 	tokenResp, err := s.keycloak.Login(req.Username, req.Password)
 	if err != nil {
 		logrus.WithError(err).Error("Keycloak login failed")
 		return nil, fmt.Errorf("authentication failed")
 	}
 
+	// Validate token and get user info from Keycloak
 	userInfo, err := s.keycloak.ValidateToken(tokenResp.AccessToken)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to validate token")
 		return nil, fmt.Errorf("token validation failed")
 	}
 
+	// Sync user with local database
 	err = s.syncUserFromKeycloak(ctx, userInfo)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to sync user from Keycloak")
+		// Don't fail login if sync fails, just log the error
 	}
 
 	return &dto.LoginResponse{
@@ -52,26 +57,25 @@ func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.Lo
 	}, nil
 }
 
-func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) error {
+// Register creates a new user account
+func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) (*dto.LoginResponse, error) {
+	// Check if user already exists in local database
 	existingUser, err := s.userRepo.GetUserByUsername(ctx, req.Username)
 	if err != nil {
-		return fmt.Errorf("failed to check existing user: %w", err)
+		return nil, fmt.Errorf("failed to check existing user: %w", err)
 	}
 	if existingUser != nil {
-		return fmt.Errorf("username already exists")
+		return nil, fmt.Errorf("username already exists")
 	}
-
-	// Check if email already exists
-	// Note: This would require a GetUserByEmail method in repository
-	// For now, we'll rely on database unique constraint
 
 	// Create user in Keycloak first
 	keycloakUserID, err := s.keycloak.CreateUser(req.Username, req.Email, req.FirstName, req.LastName, req.Password)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to create user in Keycloak")
-		return fmt.Errorf("failed to create user account")
+		return nil, fmt.Errorf("failed to create user account")
 	}
 
+	// Create user in local database
 	user := &db.User{
 		Username:   req.Username,
 		Email:      req.Email,
@@ -85,7 +89,7 @@ func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) er
 	if err != nil {
 		logrus.WithError(err).Error("Failed to create user in database")
 		// TODO: Consider rolling back Keycloak user creation
-		return fmt.Errorf("failed to create user record")
+		return nil, fmt.Errorf("failed to create user record")
 	}
 
 	// Assign default role
@@ -95,8 +99,19 @@ func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) er
 		// Don't fail registration if role assignment fails
 	}
 
+	// Auto-login the user after registration
+	loginResp, err := s.Login(ctx, &dto.LoginRequest{
+		Username: req.Username,
+		Password: req.Password,
+	})
+	if err != nil {
+		logrus.WithError(err).Error("Failed to auto-login after registration")
+		// Registration succeeded, but auto-login failed
+		return nil, fmt.Errorf("registration succeeded, please login manually")
+	}
+
 	logrus.Infof("Successfully registered user: %s", req.Username)
-	return nil
+	return loginResp, nil
 }
 
 // GetCurrentUser retrieves current user info from token

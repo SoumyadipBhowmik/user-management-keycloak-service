@@ -65,6 +65,7 @@ func NewKeycloakClient() *KeycloakClient {
 	}
 }
 
+// Login validates user credentials with Keycloak and returns token
 func (kc *KeycloakClient) Login(username, password string) (*KeycloakTokenResponse, error) {
 	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", kc.BaseURL, kc.Realm)
 
@@ -74,6 +75,12 @@ func (kc *KeycloakClient) Login(username, password string) (*KeycloakTokenRespon
 	data.Set("client_secret", kc.ClientSecret)
 	data.Set("username", username)
 	data.Set("password", password)
+	data.Set("scope", "openid profile email") // Add required scopes
+
+	logrus.Debugf("Attempting login for user: %s", username)
+	logrus.Debugf("Token URL: %s", tokenURL)
+	logrus.Debugf("Client ID: %s", kc.ClientID)
+	logrus.Debugf("Client Secret length: %d", len(kc.ClientSecret))
 
 	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
@@ -87,7 +94,14 @@ func (kc *KeycloakClient) Login(username, password string) (*KeycloakTokenRespon
 	}
 	defer resp.Body.Close()
 
+	// Log response details for debugging
+	logrus.Debugf("Login response status: %d", resp.StatusCode)
+
 	if resp.StatusCode != http.StatusOK {
+		// Read response body for more details
+		body := make([]byte, 1024)
+		resp.Body.Read(body)
+		logrus.Errorf("Login failed with status: %d, body: %s", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("login failed with status: %d", resp.StatusCode)
 	}
 
@@ -99,8 +113,13 @@ func (kc *KeycloakClient) Login(username, password string) (*KeycloakTokenRespon
 	return &tokenResp, nil
 }
 
+// ValidateToken validates access token and returns user info
 func (kc *KeycloakClient) ValidateToken(accessToken string) (*KeycloakUserInfo, error) {
 	userInfoURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/userinfo", kc.BaseURL, kc.Realm)
+
+	logrus.Debugf("Validating token at URL: %s", userInfoURL)
+	logrus.Debugf("Token length: %d", len(accessToken))
+	logrus.Debugf("Token starts with: %s...", accessToken[:min(20, len(accessToken))])
 
 	req, err := http.NewRequest("GET", userInfoURL, nil)
 	if err != nil {
@@ -114,7 +133,13 @@ func (kc *KeycloakClient) ValidateToken(accessToken string) (*KeycloakUserInfo, 
 	}
 	defer resp.Body.Close()
 
+	logrus.Debugf("Token validation response status: %d", resp.StatusCode)
+
 	if resp.StatusCode != http.StatusOK {
+		// Read response body for debugging
+		body := make([]byte, 1024)
+		resp.Body.Read(body)
+		logrus.Errorf("Token validation failed with status: %d, body: %s", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("token validation failed with status: %d", resp.StatusCode)
 	}
 
@@ -126,6 +151,14 @@ func (kc *KeycloakClient) ValidateToken(accessToken string) (*KeycloakUserInfo, 
 	return &userInfo, nil
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// GetAdminToken gets admin access token for administrative operations
 func (kc *KeycloakClient) GetAdminToken() (string, error) {
 	tokenURL := fmt.Sprintf("%s/realms/master/protocol/openid-connect/token", kc.BaseURL)
 
@@ -159,6 +192,7 @@ func (kc *KeycloakClient) GetAdminToken() (string, error) {
 	return tokenResp.AccessToken, nil
 }
 
+// CreateUser creates a new user in Keycloak
 func (kc *KeycloakClient) CreateUser(username, email, firstName, lastName, password string) (string, error) {
 	adminToken, err := kc.GetAdminToken()
 	if err != nil {
@@ -204,6 +238,7 @@ func (kc *KeycloakClient) CreateUser(username, email, firstName, lastName, passw
 		return "", fmt.Errorf("create user failed with status: %d", resp.StatusCode)
 	}
 
+	// Extract user ID from Location header
 	location := resp.Header.Get("Location")
 	if location == "" {
 		return "", fmt.Errorf("no location header in create user response")
