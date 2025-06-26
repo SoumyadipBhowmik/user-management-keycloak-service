@@ -1,1 +1,17 @@
+# Environment variables
 .env
+
+# VS Code settings (optional - see note below)
+.vscode/
+
+# Go build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
